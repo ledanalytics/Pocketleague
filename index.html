@@ -4,14 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Rocket League 2D – Primera División</title>
+  <!-- Se agrega la librería Tone.js para los efectos de sonido -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
   <style>
     :root{
       --bg:#0b1020; --panel:#11162a; --panel2:#0f1426; --accent:#00d1ff; --text:#e7ecff;
       --good:#4ade80; --warn:#f59e0b; --bad:#ef4444;
     }
     *{box-sizing:border-box}
-    html,body{height:100%;margin:0;background:radial-gradient(1200px 700px at 50% 50%, #0e1533 0%, #0b1020 70%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
-    #app{display:grid;grid-template-columns:320px 1fr;gap:16px;max-width:1600px;margin:0 auto;padding:12px; height: 100%; background: var(--bg);}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+    #app{display:grid;grid-template-columns:320px 1fr;gap:16px;max-width:1600px;margin:0 auto;padding:12px; height: 100%;}
+    /* Estilos para cuando el menú está oculto */
+    #app.menu-hidden { grid-template-columns: 1fr; }
+    #app.menu-hidden #settingsPanel { display: none; }
+
     .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid #1e274a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:14px}
     h1{font-size:22px;margin:0 0 8px;letter-spacing:.3px}
     label{font-size:13px;opacity:.9}
@@ -42,7 +48,7 @@
 </head>
 <body>
 <div id="app">
-  <div class="card">
+  <div class="card" id="settingsPanel">
     <h1>Rocket League 2D ⚽🇦🇷</h1>
     <p style="opacity:.85;margin-top:6px">Partido 1v1 local inspirado en Rocket League, con autos tematizados por equipos de la Primera División.</p>
     <div class="row" style="margin-top:10px">
@@ -78,6 +84,9 @@
     <button id="start" class="btn" style="margin-top:12px">Iniciar Partido</button>
     <div class="row" style="margin-top:8px">
         <button id="reset">Reiniciar</button>
+        <button id="toggleMenuBtn">Ocultar Menú</button>
+    </div>
+     <div class="row" style="margin-top:8px">
         <button id="fullscreenBtn">Pantalla Completa</button>
     </div>
 
@@ -90,7 +99,7 @@
     <p class="tiny">Hecho en HTML5 Canvas. Física simple 2D.</p>
   </div>
 
-  <div class="card" style="position:relative;min-height:520px">
+  <div class="card" id="gameContainer" style="position:relative;min-height:520px">
     <canvas id="game" width="1200" height="700" aria-label="Campo de juego"></canvas>
     <div id="hud">
       <div class="score" id="score">0 — 0</div>
@@ -105,6 +114,7 @@
 </div>
 
 <script>
+// --- Constantes y Configuración Inicial ---
 const TEAMS = [
   { name: 'Boca Juniors', primary:'#0033A0', secondary:'#F7D117' }, { name: 'River Plate', primary:'#FFFFFF', secondary:'#E30613' },
   { name: 'Racing Club', primary:'#67C8FF', secondary:'#FFFFFF' }, { name: 'Independiente', primary:'#E1001A', secondary:'#FFFFFF' },
@@ -137,6 +147,7 @@ function renderTags(){
 renderTags();
 sel1.addEventListener('change',renderTags); sel2.addEventListener('change',renderTags);
 
+// --- Configuración del Canvas y Juego ---
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let W = canvas.width, H = canvas.height;
@@ -147,13 +158,36 @@ const GOAL = { width:36, height:260 };
 let state = { running:false, countdown: 3, time: 3*60, goalLimit: 0, golden:false, score:[0,0], lastGoalTime:0, whoScored:-1 };
 
 function car(teamIndex, x, y, facing){
-  return { teamIndex, x, y, r:24, angle:facing, vx:0, vy:0, accel:0.28, turn:0.035, maxSpeed:8, friction:0.985, boost:100, boosting:false, boostPower:0.6, boostDrain:25/60, boostGain:14/60 };
+  return { teamIndex, x, y, r:24, angle:facing, vx:0, vy:0, accel:0.28, turn:0.035, maxSpeed:8, friction:0.985, boost:100, boosting:false, wasBoosting: false, boostPower:0.6, boostDrain:25/60, boostGain:14/60 };
 }
 let p1, p2;
 
 const ball = { x:W/2, y:H/2, r:16, vx:0, vy:0, bounciness:0.98, friction:0.998, max:16 };
 const orbs = [ {x:W*0.25,y:H*0.35,r:14,t:0,cool:0}, {x:W*0.75,y:H*0.35,r:14,t:0,cool:0}, {x:W*0.25,y:H*0.65,r:14,t:0,cool:0}, {x:W*0.75,y:H*0.65,r:14,t:0,cool:0} ];
 
+// --- NUEVO: Configuración de Sonido ---
+let soundsReady = false;
+let kickSound, wallHitSound, goalSound, boostSound;
+
+async function setupSounds() {
+    if (soundsReady) return;
+    await Tone.start();
+    console.log("Audio context started");
+
+    kickSound = new Tone.MembraneSynth({ pitchDecay: 0.02, octaves: 6, envelope: { attack: 0.001, decay: 0.3, sustain: 0.01, release: 0.2 } }).toDestination();
+    wallHitSound = new Tone.MembraneSynth({ pitchDecay: 0.01, octaves: 4, envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 } }).toDestination();
+    goalSound = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.5 } }).toDestination();
+    boostSound = new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+    
+    wallHitSound.volume.value = -8;
+    goalSound.volume.value = -3;
+    boostSound.volume.value = -15;
+
+    soundsReady = true;
+}
+
+
+// --- Controles (Teclado, Mouse, Táctil) ---
 const keys = {};
 window.addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code==='Space') e.preventDefault(); });
 window.addEventListener('keyup',e=>{ keys[e.code]=false; });
@@ -164,7 +198,6 @@ canvas.addEventListener('mousedown', e => { if (e.button === 0) mouse.left = tru
 canvas.addEventListener('mouseup', e => { if (e.button === 0) mouse.left = false; if (e.button === 2) mouse.right = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// --- Lógica Táctil para 2 Jugadores ---
 const touch1 = { x: W*0.25, y: H/2, active: false, boost: false, id: -1 };
 const touch2 = { x: W*0.75, y: H/2, active: false, boost: false, id: -1 };
 const activeTouches = new Map();
@@ -179,21 +212,21 @@ function handleTouch(e) {
         const touchState = (touchX < screenWidth / 2) ? touch1 : touch2;
         
         if (e.type === 'touchstart') {
-            if (touchState.id === -1) { // Primer dedo para este jugador
+            if (touchState.id === -1) {
                 touchState.id = touch.identifier;
                 touchState.active = true;
-            } else { // Segundo dedo (turbo)
+            } else {
                 touchState.boost = true;
             }
             activeTouches.set(touch.identifier, touchState);
         } else if (e.type === 'touchend' || e.type === 'touchcancel') {
             const endedTouchState = activeTouches.get(touch.identifier);
             if (endedTouchState) {
-                if (endedTouchState.id === touch.identifier) { // Dedo principal levantado
+                if (endedTouchState.id === touch.identifier) {
                     endedTouchState.active = false;
                     endedTouchState.boost = false;
                     endedTouchState.id = -1;
-                } else { // Dedo de turbo levantado
+                } else {
                     endedTouchState.boost = false;
                 }
             }
@@ -211,7 +244,7 @@ canvas.addEventListener('touchmove', handleTouch, { passive: false });
 canvas.addEventListener('touchend', handleTouch, { passive: false });
 canvas.addEventListener('touchcancel', handleTouch, { passive: false });
 
-
+// --- Lógica del Juego ---
 function cpuLogic(me, opp){
   const target = {x:ball.x, y:ball.y}; const dx = target.x - me.x, dy = target.y - me.y;
   const desired = Math.atan2(dy, dx); let diff = wrapAngle(desired - me.angle);
@@ -231,6 +264,7 @@ function resetKickoff(){
   state.countdown=3; state.whoScored=-1; document.getElementById('goal').classList.remove('show'); renderTags();
 }
 
+// --- Funciones de Dibujo ---
 function drawCar(c){
   const team = TEAMS[c.teamIndex];
   ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.angle);
@@ -303,14 +337,20 @@ function drawPointerIndicators() {
     }
 }
 
+// --- Física y Colisiones ---
 function updateCar(c, input){
   if(input.up){ c.vx += Math.cos(c.angle)*c.accel; c.vy += Math.sin(c.angle)*c.accel; }
   if(input.down){ c.vx -= Math.cos(c.angle)*c.accel*0.6; c.vy -= Math.sin(c.angle)*c.accel*0.6; }
   const speed = Math.hypot(c.vx,c.vy), turnScale = Math.min(1, speed/3);
   if(input.left) c.angle -= c.turn*turnScale; if(input.right) c.angle += c.turn*turnScale;
+  
+  c.wasBoosting = c.boosting;
   c.boosting = !!input.boost && c.boost>0;
+  if(c.boosting && !c.wasBoosting && soundsReady) boostSound.triggerAttackRelease("8n");
+
   if(c.boosting){ c.vx += Math.cos(c.angle)*c.boostPower; c.vy += Math.sin(c.angle)*c.boostPower; c.boost = Math.max(0, c.boost - c.boostDrain*60*dt); }
   else c.boost = Math.min(100, c.boost + c.boostGain*60*dt);
+  
   const max = c.maxSpeed + (c.boosting?4:0);
   const sp = Math.hypot(c.vx,c.vy); if(sp>max){ c.vx *= max/sp; c.vy *= max/sp; }
   c.x += c.vx; c.y += c.vy; c.vx *= c.friction; c.vy *= c.friction;
@@ -338,16 +378,19 @@ function carInputTouch(c, touchState){
 function ballPhysics(){
   ball.x += ball.vx; ball.y += ball.vy; ball.vx *= ball.friction; ball.vy *= ball.friction;
   if(Math.hypot(ball.vx,ball.vy)>ball.max){ const s=Math.hypot(ball.vx,ball.vy); ball.vx*=ball.max/s; ball.vy*=ball.max/s; }
-  if(ball.y-ball.r < FIELD.top){ ball.y=FIELD.top+ball.r; ball.vy*=-ball.bounciness; }
-  if(ball.y+ball.r > FIELD.bottom){ ball.y=FIELD.bottom-ball.r; ball.vy*=-ball.bounciness; }
+  let bounced = false;
+  if(ball.y-ball.r < FIELD.top){ ball.y=FIELD.top+ball.r; ball.vy*=-ball.bounciness; bounced = true; }
+  if(ball.y+ball.r > FIELD.bottom){ ball.y=FIELD.bottom-ball.r; ball.vy*=-ball.bounciness; bounced = true; }
   const isOutsideGoalY = Math.abs(ball.y - H/2) >= GOAL.height/2;
-  if(ball.x-ball.r < FIELD.left && isOutsideGoalY){ ball.x=FIELD.left+ball.r; ball.vx*=-ball.bounciness; }
-  if(ball.x+ball.r > FIELD.right && isOutsideGoalY){ ball.x=FIELD.right-ball.r; ball.vx*=-ball.bounciness; }
+  if(ball.x-ball.r < FIELD.left && isOutsideGoalY){ ball.x=FIELD.left+ball.r; ball.vx*=-ball.bounciness; bounced = true; }
+  if(ball.x+ball.r > FIELD.right && isOutsideGoalY){ ball.x=FIELD.right-ball.r; ball.vx*=-ball.bounciness; bounced = true; }
+  if (bounced && soundsReady) wallHitSound.triggerAttackRelease("C2", "16n");
 }
 
 function collideCarBall(c){
   const R = c.r*0.9 + ball.r; const dx=ball.x-c.x, dy=ball.y-c.y; const d2=dx*dx+dy*dy;
   if(d2 < R*R){
+    if (soundsReady) kickSound.triggerAttackRelease("C1", "8n");
     const d = Math.sqrt(d2)||0.0001, nx=dx/d, ny=dy/d;
     const overlap = R-d; ball.x += nx*overlap; ball.y += ny*overlap;
     const relvx = ball.vx - c.vx, relvy = ball.vy - c.vy; const dot = relvx*nx + relvy*ny;
@@ -363,6 +406,7 @@ function collideCars(a,b){
   }
 }
 
+// --- Flujo del Partido ---
 function checkGoals(){
   const inLeftGoal = ball.x-ball.r < FIELD.left && Math.abs(ball.y - H/2) < GOAL.height/2;
   const inRightGoal = ball.x+ball.r > FIELD.right && Math.abs(ball.y - H/2) < GOAL.height/2;
@@ -372,6 +416,7 @@ function checkGoals(){
 function scoreGoal(who){
   state.score[who]++; state.whoScored=who; state.lastGoalTime=performance.now();
   document.getElementById('goal').classList.add('show'); updateScore();
+  if(soundsReady){ goalSound.triggerAttackRelease("C5", "8n", Tone.now()); goalSound.triggerAttackRelease("G5", "8n", Tone.now() + 0.2); }
   if(state.goalLimit>0 && (state.score[0]>=state.goalLimit || state.score[1]>=state.goalLimit)){ finishMatch(); return; }
   resetKickoff();
 }
@@ -395,6 +440,7 @@ function tickTimer(dt){
   document.getElementById('timer').textContent = `${m}:${s}`;
 }
 
+// --- Bucle Principal del Juego ---
 let last=performance.now(), dt=0;
 function loop(now){
   dt = Math.min(0.05, (now-last)/1000); last=now;
@@ -407,21 +453,10 @@ function loop(now){
       ctx.fillStyle='#ffffffee'; ctx.font='900 80px system-ui'; ctx.textAlign='center'; ctx.fillText(cd, W/2, H/2-140);
       state.countdown -= dt; if(state.countdown<0) state.countdown=0;
     } else {
-      const pointerControl = document.getElementById('pointerControl').value;
-      const touch2P = document.getElementById('touch2p').checked;
-      const cpuOn = document.getElementById('cpu').checked;
-      
+      const pointerControl = document.getElementById('pointerControl').value, touch2P = document.getElementById('touch2p').checked, cpuOn = document.getElementById('cpu').checked;
       let in1, in2;
-      // P1 Input
-      if (pointerControl === 'p1') in1 = carInputPointer(p1);
-      else if (touch2P) in1 = carInputTouch(p1, touch1);
-      else in1 = carInputP1();
-      
-      // P2 Input
-      if (cpuOn) { cpuLogic(p2, p1); in2 = {}; }
-      else if (pointerControl === 'p2') in2 = carInputPointer(p2);
-      else if (touch2P) in2 = carInputTouch(p2, touch2);
-      else in2 = carInputP2();
+      if (pointerControl === 'p1') in1 = carInputPointer(p1); else if (touch2P) in1 = carInputTouch(p1, touch1); else in1 = carInputP1();
+      if (cpuOn) { cpuLogic(p2, p1); in2 = {}; } else if (pointerControl === 'p2') in2 = carInputPointer(p2); else if (touch2P) in2 = carInputTouch(p2, touch2); else in2 = carInputP2();
 
       updateCar(p1,in1); updateCar(p2,in2);
       
@@ -442,7 +477,9 @@ function loop(now){
 }
 requestAnimationFrame(loop);
 
+// --- Manejo de Botones y Estado ---
 function startMatch(){
+  setupSounds(); // Intenta inicializar el audio
   const speedMultiplier = +document.getElementById('gameSpeed').value;
   state.time = +document.getElementById('minutes').value * 60;
   state.goalLimit = +document.getElementById('goalLimit').value;
@@ -467,14 +504,21 @@ document.getElementById('start').addEventListener('click', startMatch);
 document.getElementById('reset').addEventListener('click', ()=>{ state.running=false; state.score=[0,0]; updateScore(); state.time=180; document.getElementById('timer').textContent='03:00'; document.getElementById('winner').style.display='none'; startMatch(); });
 
 document.getElementById('fullscreenBtn').addEventListener('click', () => {
-  const appEl = document.getElementById('app');
+  const gameContainer = document.getElementById('gameContainer');
   if (!document.fullscreenElement) {
-    appEl.requestFullscreen().catch(err => {
+    gameContainer.requestFullscreen().catch(err => {
       console.error(`Error al activar pantalla completa: ${err.message} (${err.name})`);
     });
   } else {
     document.exitFullscreen();
   }
+});
+
+document.getElementById('toggleMenuBtn').addEventListener('click', () => {
+    const appEl = document.getElementById('app');
+    const btn = document.getElementById('toggleMenuBtn');
+    appEl.classList.toggle('menu-hidden');
+    btn.textContent = appEl.classList.contains('menu-hidden') ? 'Mostrar Menú' : 'Ocultar Menú';
 });
 
 startMatch();
